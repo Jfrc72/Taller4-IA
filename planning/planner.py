@@ -138,7 +138,68 @@ def forwardBFS(problem: Problem) -> list[Action]:
          avoid revisiting the same state twice (graph search, not tree search).
     """
     ### Your code here ###
+    start = problem.getStartState()
+    if problem.isGoalState(start):
+        return []
 
+    medical_posts = set(problem.objects["medical_posts"])
+
+    def is_useful_for_rescue(state: State, action: Action) -> bool:
+        """Avoid reversible detours that cannot help achieve rescue goals."""
+        if action.name.startswith("PutDown"):
+            at_effects = [fluent for fluent in action.add_list if fluent[0] == "At"]
+            if not at_effects:
+                return True
+            _pred, obj, loc = at_effects[0]
+            if obj in problem.objects["supplies"]:
+                return False
+            if obj in problem.objects["patients"] and loc not in medical_posts:
+                return False
+
+        if action.name.startswith("PickUp"):
+            held_objects = [
+                fluent[2]
+                for fluent in action.add_list
+                if fluent[0] == "Holding"
+            ]
+            if not held_objects:
+                return True
+            obj = held_objects[0]
+            if obj in problem.objects["supplies"]:
+                return not any(fluent[0] == "SuppliesReady" for fluent in state)
+            if obj in problem.objects["patients"]:
+                patient_locations = [
+                    fluent[2]
+                    for fluent in action.del_list
+                    if fluent[0] == "At" and fluent[1] == obj
+                ]
+                return (
+                    not patient_locations
+                    or patient_locations[0] not in medical_posts
+                )
+
+        return True
+
+    frontier = Queue()
+    frontier.push((start, []))
+    visited = {start}
+
+    while not frontier.isEmpty():
+        state, plan = frontier.pop()
+        for next_state, action, _cost in problem.getSuccessors(state):
+            if not is_useful_for_rescue(state, action):
+                continue
+            if next_state in visited:
+                continue
+
+            next_plan = plan + [action]
+            if problem.isGoalState(next_state):
+                return next_plan
+
+            visited.add(next_state)
+            frontier.push((next_state, next_plan))
+
+    return []
     ### End of your code ###
 
 

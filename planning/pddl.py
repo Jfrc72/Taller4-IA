@@ -144,12 +144,9 @@ class Problem:
     def getSuccessors(self, state: State) -> list[tuple[State, Action, int]]:
         """Return list of (next_state, action, cost=1) triples."""
         self._expanded += 1
-        if not hasattr(self, "_all_groundings"):
-            self._all_groundings = get_all_groundings(self.domain, self.objects)
         successors = []
-        for action in self._all_groundings:
-            if is_applicable(state, action):
-                successors.append((apply_action(state, action), action, 1))
+        for action in get_applicable_actions(state, self.domain, self.objects):
+            successors.append((apply_action(state, action), action, 1))
         return successors
 
     def getCostOfActions(self, actions: list[Action]) -> int:
@@ -172,7 +169,7 @@ def is_applicable(state: State, action: Action) -> bool:
     Tip: frozenset supports the .issubset() method and the .isdisjoint() method.
     """
     ### Your code here ###
-    return False
+    return action.precond_pos.issubset(state) and action.precond_neg.isdisjoint(state)
     ### End of your code ###
 
 
@@ -186,7 +183,7 @@ def apply_action(state: State, action: Action) -> State:
     The order matters: first remove del_list, then add add_list.
     """
     ### Your code here ###
-    return frozenset({})
+    return (state - action.del_list) | action.add_list
     ### End of your code ###
 
 
@@ -241,5 +238,73 @@ def get_applicable_actions(
          Or use get_all_groundings() and filter the results by applicability.
     """
     ### Your code here ###
-    return []
+    type_map: dict[str, list] = {
+        "r": objects["robots"],
+        "loc": objects["cells"],
+        "from_cell": objects["cells"],
+        "to_cell": objects["cells"],
+        "obj": objects["objects"],
+        "s": objects["supplies"],
+        "p": objects["patients"],
+    }
+
+    actions: list[Action] = []
+
+    def unify_template(
+        template: Fluent,
+        fact: Fluent,
+        parameters: set[str],
+        binding: dict[str, object],
+    ) -> dict[str, object] | None:
+        if len(template) != len(fact) or template[0] != fact[0]:
+            return None
+
+        new_binding = binding.copy()
+        for expected, actual in zip(template[1:], fact[1:]):
+            if expected in parameters:
+                bound = new_binding.get(expected)
+                if bound is not None and bound != actual:
+                    return None
+                if actual not in type_map.get(expected, []):
+                    return None
+                new_binding[expected] = actual
+            elif expected != actual:
+                return None
+        return new_binding
+
+    for schema in domain:
+        parameters = set(schema.parameters)
+        bindings: list[dict[str, object]] = [{}]
+
+        for precondition in schema.precond_pos:
+            matching_facts = [fact for fact in state if fact[0] == precondition[0]]
+            next_bindings: list[dict[str, object]] = []
+            for binding in bindings:
+                for fact in matching_facts:
+                    unified = unify_template(
+                        precondition, fact, parameters, binding
+                    )
+                    if unified is not None:
+                        next_bindings.append(unified)
+            bindings = next_bindings
+            if not bindings:
+                break
+
+        for binding in bindings:
+            unbound = [param for param in schema.parameters if param not in binding]
+            domains = [type_map.get(param, []) for param in unbound]
+            if any(len(d) == 0 for d in domains):
+                continue
+            for values in product(*domains) if domains else [()]:
+                complete_binding = binding | dict(zip(unbound, values))
+                if schema.name == "Move":
+                    from_cell = complete_binding["from_cell"]
+                    to_cell = complete_binding["to_cell"]
+                    if from_cell == to_cell:
+                        continue
+                action = schema.ground(complete_binding)
+                if is_applicable(state, action):
+                    actions.append(action)
+
+    return actions
     ### End of your code ###
