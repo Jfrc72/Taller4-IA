@@ -12,6 +12,7 @@ from planning.pddl import (
 )
 from planning.utils import Queue, PriorityQueue
 from planning.heuristics import nullHeuristic
+from planning.pddl import get_all_groundings
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +226,20 @@ def regress(goal_set: State, action: Action) -> State | None:
          Check relevance first, then check for contradictions, then compute.
     """
     ### Your code here ###
+    goal = frozenset(goal_set)
 
+    if action.add_list.isdisjoint(goal):
+        return None
+
+    if not action.del_list.isdisjoint(goal):
+        return None
+
+    regressed_goal = frozenset((goal - action.add_list) | action.precond_pos)
+
+    if not action.precond_neg.isdisjoint(regressed_goal):
+        return None
+
+    return regressed_goal
     ### End of your code ###
 
 
@@ -248,7 +262,126 @@ def backwardSearch(problem: Problem) -> list[Action]:
          Pickable) that are false in the initial state — these are dead ends.
     """
     ### Your code here ###
+    initial_state = frozenset(problem.initial_state)
+    start_goal = frozenset(problem.goal)
 
+    all_actions = get_all_groundings(problem.domain, problem.objects)
+
+    static_predicates = {"Adjacent", "MedicalPost", "Pickable"}
+    optimized_actions = []
+
+    for action in all_actions:
+        valid_action = True
+
+        for fluent in action.precond_pos:
+            if fluent[0] in static_predicates and fluent not in initial_state:
+                valid_action = False
+                break
+
+        if valid_action:
+            optimized_actions.append(action)
+
+    all_actions = optimized_actions
+
+    all_actions.sort(key=lambda action: 1 if action.name.startswith("Move(") else 0)
+
+    frontier = [(start_goal, [])]
+    frontier_index = 0
+
+    visited = {start_goal}
+
+    problem._expanded = 0
+
+    while frontier_index < len(frontier):
+        current_goal, plan = frontier[frontier_index]
+        frontier_index += 1
+
+        current_goal = frozenset(current_goal)
+        problem._expanded += 1
+
+        if len(current_goal - initial_state) == 0:
+            return plan
+
+        for action in all_actions:
+
+            if action.add_list.isdisjoint(current_goal):
+                continue
+
+            regressed_goal = regress(current_goal, action)
+
+            if regressed_goal is None:
+                continue
+
+            regressed_goal = frozenset(regressed_goal)
+
+            if regressed_goal in visited:
+                continue
+
+            inconsistent = False
+
+            positions = {}
+
+            for fluent in regressed_goal:
+                if len(fluent) == 0:
+                    continue
+
+                predicate = fluent[0]
+
+                if predicate == "At" and len(fluent) >= 3:
+                    entity = fluent[1]
+                    location = fluent[2]
+
+                    if entity in positions and positions[entity] != location:
+                        inconsistent = True
+                        break
+
+                    positions[entity] = location
+
+            if inconsistent:
+                continue
+
+            hands_free_robots = set()
+
+            for fluent in regressed_goal:
+                if len(fluent) >= 2 and fluent[0] == "HandsFree":
+                    hands_free_robots.add(fluent[1])
+
+            holdings = {}
+
+            for fluent in regressed_goal:
+                if len(fluent) >= 3 and fluent[0] == "Holding":
+                    robot = fluent[1]
+                    obj = fluent[2]
+
+                    if robot in hands_free_robots:
+                        inconsistent = True
+                        break
+
+                    if robot in holdings and holdings[robot] != obj:
+                        inconsistent = True
+                        break
+
+                    holdings[robot] = obj
+
+            if inconsistent:
+                continue
+
+            for fluent in regressed_goal:
+                if len(fluent) > 0 and fluent[0] in static_predicates:
+                    if fluent not in initial_state:
+                        inconsistent = True
+                        break
+
+            if inconsistent:
+                continue
+    
+            visited.add(regressed_goal)
+
+            frontier.append((regressed_goal, [action] + plan))
+
+    print("No se encontró plan")
+
+    return []
     ### End of your code ###
 
 
