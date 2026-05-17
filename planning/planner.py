@@ -229,8 +229,8 @@ def regress(goal_set: State, action: Action) -> State | None:
     Tip: Use frozenset operations: intersection (&), difference (-), union (|).
          Check relevance first, then check for contradictions, then compute.
     """
-
-    goal = goal_set
+    ### Your code here ###
+    goal = frozenset(goal_set)
 
     if action.add_list.isdisjoint(goal):
         return None
@@ -238,12 +238,13 @@ def regress(goal_set: State, action: Action) -> State | None:
     if not action.del_list.isdisjoint(goal):
         return None
 
-    regressed_goal = (goal - action.add_list) | action.precond_pos
+    regressed_goal = frozenset((goal - action.add_list) | action.precond_pos)
 
     if not action.precond_neg.isdisjoint(regressed_goal):
         return None
 
-    return frozenset(regressed_goal)
+    return regressed_goal
+    ### End of your code ###
 
 
 def backwardSearch(problem: Problem) -> list[Action]:
@@ -264,202 +265,128 @@ def backwardSearch(problem: Problem) -> list[Action]:
          Skip subgoals that contain static predicates (MedicalPost, Adjacent,
          Pickable) that are false in the initial state — these are dead ends.
     """
-
+    ### Your code here ###
     initial_state = frozenset(problem.initial_state)
     start_goal = frozenset(problem.goal)
 
-    static_predicates = {"Adjacent", "MedicalPost", "Pickable"}
-
-    def is_consistent(goal: State) -> bool:
-        positions = {}
-        holdings = {}
-        hands_free = set()
-
-        for fluent in goal:
-            if not fluent:
-                continue
-
-            pred = fluent[0]
-
-            if pred in static_predicates and fluent not in initial_state:
-                return False
-
-            if pred == "At" and len(fluent) >= 3:
-                entity = fluent[1]
-                location = fluent[2]
-
-                old_location = positions.get(entity)
-                if old_location is not None and old_location != location:
-                    return False
-
-                positions[entity] = location
-
-            elif pred == "HandsFree" and len(fluent) >= 2:
-                robot = fluent[1]
-
-                if robot in holdings:
-                    return False
-
-                hands_free.add(robot)
-
-            elif pred == "Holding" and len(fluent) >= 3:
-                robot = fluent[1]
-                obj = fluent[2]
-
-                if robot in hands_free:
-                    return False
-
-                old_obj = holdings.get(robot)
-                if old_obj is not None and old_obj != obj:
-                    return False
-
-                holdings[robot] = obj
-
-        return True
-
-    if not is_consistent(start_goal):
-        problem._expanded = 0
-        return []
-
     all_actions = get_all_groundings(problem.domain, problem.objects)
 
-    usable_actions = []
+    static_predicates = {"Adjacent", "MedicalPost", "Pickable"}
+    optimized_actions = []
 
     for action in all_actions:
-        valid = True
+        valid_action = True
 
         for fluent in action.precond_pos:
-            if fluent and fluent[0] in static_predicates and fluent not in initial_state:
-                valid = False
+            if fluent[0] in static_predicates and fluent not in initial_state:
+                valid_action = False
                 break
 
-        if valid:
-            usable_actions.append(action)
+        if valid_action:
+            optimized_actions.append(action)
 
-    def action_priority(action: Action) -> int:
-        name = action.name
+    all_actions = optimized_actions
 
-        if name.startswith("Rescue("):
-            return 0
-        if name.startswith("SetUpSupplies("):
-            return 1
-        if name.startswith("PutDown("):
-            return 2
-        if name.startswith("PickUp("):
-            return 3
-        if name.startswith("Move("):
-            return 4
+    all_actions.sort(key=lambda action: 1 if action.name.startswith("Move(") else 0)
 
-        return 5
+    frontier = [(start_goal, [])]
+    frontier_index = 0
 
-    usable_actions.sort(key=action_priority)
-
-    actions_by_add = defaultdict(list)
-
-    for action in usable_actions:
-        for fluent in action.add_list:
-            actions_by_add[fluent].append(action)
-
-    def heuristic(goal: State) -> int:
-        unsatisfied = goal - initial_state
-
-        score = len(unsatisfied) * 10
-
-        for fluent in unsatisfied:
-            if fluent and fluent[0] == "At":
-                score += 3
-            elif fluent and fluent[0] in static_predicates:
-                score += 1000
-
-        return score
-
-    def candidate_actions_for(goal: State) -> list[Action]:
-        unsatisfied = goal - initial_state
-
-        candidates = []
-        seen = set()
-
-        ordered_fluents = sorted(
-            unsatisfied,
-            key=lambda fluent: len(actions_by_add.get(fluent, ()))
-        )
-
-        for fluent in ordered_fluents:
-            for action in actions_by_add.get(fluent, ()):
-                action_key = action.name
-
-                if action_key not in seen:
-                    seen.add(action_key)
-                    candidates.append(action)
-
-        candidates.sort(key=action_priority)
-        return candidates
-
-    open_heap = []
-    tie = count()
-
-    g_cost = {start_goal: 0}
-    parent = {}
-
-    heappush(open_heap, (heuristic(start_goal), 0, next(tie), start_goal))
-
-    visited = set()
+    visited = {start_goal}
 
     problem._expanded = 0
 
-    while open_heap:
-        _, depth, _, current_goal = heappop(open_heap)
+    while frontier_index < len(frontier):
+        current_goal, plan = frontier[frontier_index]
+        frontier_index += 1
 
-        if current_goal in visited:
-            continue
-
-        visited.add(current_goal)
+        current_goal = frozenset(current_goal)
         problem._expanded += 1
 
-        unsatisfied = current_goal - initial_state
-
-        if not unsatisfied:
-            plan = []
-            goal = current_goal
-
-            while goal != start_goal:
-                previous_goal, action = parent[goal]
-                plan.append(action)
-                goal = previous_goal
-
+        if len(current_goal - initial_state) == 0:
             return plan
 
-        for action in candidate_actions_for(current_goal):
+        for action in all_actions:
+
+            if action.add_list.isdisjoint(current_goal):
+                continue
+
             regressed_goal = regress(current_goal, action)
 
             if regressed_goal is None:
                 continue
 
+            regressed_goal = frozenset(regressed_goal)
+
             if regressed_goal in visited:
                 continue
 
-            if not is_consistent(regressed_goal):
+            inconsistent = False
+
+            positions = {}
+
+            for fluent in regressed_goal:
+                if len(fluent) == 0:
+                    continue
+
+                predicate = fluent[0]
+
+                if predicate == "At" and len(fluent) >= 3:
+                    entity = fluent[1]
+                    location = fluent[2]
+
+                    if entity in positions and positions[entity] != location:
+                        inconsistent = True
+                        break
+
+                    positions[entity] = location
+
+            if inconsistent:
                 continue
 
-            new_depth = depth + 1
-            old_depth = g_cost.get(regressed_goal)
+            hands_free_robots = set()
 
-            if old_depth is not None and old_depth <= new_depth:
+            for fluent in regressed_goal:
+                if len(fluent) >= 2 and fluent[0] == "HandsFree":
+                    hands_free_robots.add(fluent[1])
+
+            holdings = {}
+
+            for fluent in regressed_goal:
+                if len(fluent) >= 3 and fluent[0] == "Holding":
+                    robot = fluent[1]
+                    obj = fluent[2]
+
+                    if robot in hands_free_robots:
+                        inconsistent = True
+                        break
+
+                    if robot in holdings and holdings[robot] != obj:
+                        inconsistent = True
+                        break
+
+                    holdings[robot] = obj
+
+            if inconsistent:
                 continue
 
-            g_cost[regressed_goal] = new_depth
-            parent[regressed_goal] = (current_goal, action)
+            for fluent in regressed_goal:
+                if len(fluent) > 0 and fluent[0] in static_predicates:
+                    if fluent not in initial_state:
+                        inconsistent = True
+                        break
 
-            priority = new_depth + heuristic(regressed_goal)
+            if inconsistent:
+                continue
+    
+            visited.add(regressed_goal)
 
-            heappush(
-                open_heap,
-                (priority, new_depth, next(tie), regressed_goal)
-            )
+            frontier.append((regressed_goal, [action] + plan))
 
     print("No se encontró plan")
-    return []
 
+    return []
+    ### End of your code ###
 
 
 # ---------------------------------------------------------------------------
